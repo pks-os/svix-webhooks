@@ -18,8 +18,9 @@ import (
 // EnvironmentIn struct for EnvironmentIn
 type EnvironmentIn struct {
 	CreatedAt time.Time `json:"createdAt"`
-	EventTypes []EventTypeIn `json:"eventTypes,omitempty"`
+	EventTypes *[]EventTypeIn `json:"eventTypes,omitempty"`
 	Settings *SettingsIn `json:"settings,omitempty"`
+	TransformationTemplates []TemplateIn `json:"transformationTemplates,omitempty"`
 	Version int32 `json:"version"`
 }
 
@@ -68,11 +69,11 @@ func (o *EnvironmentIn) SetCreatedAt(v time.Time) {
 
 // GetEventTypes returns the EventTypes field value if set, zero value otherwise (both if not set or set to explicit null).
 func (o *EnvironmentIn) GetEventTypes() []EventTypeIn {
-	if o == nil  {
+	if o == nil || o.EventTypes == nil {
 		var ret []EventTypeIn
 		return ret
 	}
-	return o.EventTypes
+	return *o.EventTypes
 }
 
 // GetEventTypesOk returns a tuple with the EventTypes field value if set, nil otherwise
@@ -82,7 +83,7 @@ func (o *EnvironmentIn) GetEventTypesOk() (*[]EventTypeIn, bool) {
 	if o == nil || o.EventTypes == nil {
 		return nil, false
 	}
-	return &o.EventTypes, true
+	return o.EventTypes, true
 }
 
 // HasEventTypes returns a boolean if a field has been set.
@@ -96,7 +97,7 @@ func (o *EnvironmentIn) HasEventTypes() bool {
 
 // SetEventTypes gets a reference to the given []EventTypeIn and assigns it to the EventTypes field.
 func (o *EnvironmentIn) SetEventTypes(v []EventTypeIn) {
-	o.EventTypes = v
+	o.EventTypes = &v
 }
 
 // GetSettings returns the Settings field value if set, zero value otherwise.
@@ -129,6 +130,39 @@ func (o *EnvironmentIn) HasSettings() bool {
 // SetSettings gets a reference to the given SettingsIn and assigns it to the Settings field.
 func (o *EnvironmentIn) SetSettings(v SettingsIn) {
 	o.Settings = &v
+}
+
+// GetTransformationTemplates returns the TransformationTemplates field value if set, zero value otherwise (both if not set or set to explicit null).
+func (o *EnvironmentIn) GetTransformationTemplates() []TemplateIn {
+	if o == nil  {
+		var ret []TemplateIn
+		return ret
+	}
+	return o.TransformationTemplates
+}
+
+// GetTransformationTemplatesOk returns a tuple with the TransformationTemplates field value if set, nil otherwise
+// and a boolean to check if the value has been set.
+// NOTE: If the value is an explicit nil, `nil, true` will be returned
+func (o *EnvironmentIn) GetTransformationTemplatesOk() (*[]TemplateIn, bool) {
+	if o == nil || o.TransformationTemplates == nil {
+		return nil, false
+	}
+	return &o.TransformationTemplates, true
+}
+
+// HasTransformationTemplates returns a boolean if a field has been set.
+func (o *EnvironmentIn) HasTransformationTemplates() bool {
+	if o != nil && o.TransformationTemplates != nil {
+		return true
+	}
+
+	return false
+}
+
+// SetTransformationTemplates gets a reference to the given []TemplateIn and assigns it to the TransformationTemplates field.
+func (o *EnvironmentIn) SetTransformationTemplates(v []TemplateIn) {
+	o.TransformationTemplates = v
 }
 
 // GetVersion returns the Version field value
@@ -165,6 +199,9 @@ func (o EnvironmentIn) MarshalJSON() ([]byte, error) {
 	}
 	if o.Settings != nil {
 		toSerialize["settings"] = o.Settings
+	}
+	if o.TransformationTemplates != nil {
+		toSerialize["transformationTemplates"] = o.TransformationTemplates
 	}
 	if true {
 		toSerialize["version"] = o.Version

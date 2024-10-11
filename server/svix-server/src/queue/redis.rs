@@ -29,7 +29,7 @@
 
 use std::{num::NonZeroUsize, sync::Arc, time::Duration};
 
-use omniqueue::backends::{RedisBackend, RedisConfig};
+use omniqueue::backends::{redis::DeadLetterQueueConfig, RedisBackend, RedisConfig};
 use redis::{AsyncCommands as _, RedisResult};
 
 use super::{QueueTask, TaskQueueConsumer, TaskQueueProducer};
@@ -50,6 +50,9 @@ const DELAYED: &str = "{queue}_svix_delayed";
 
 /// The key for the lock guarding the delayed queue background task.
 const DELAYED_LOCK: &str = "{queue}_svix_delayed_lock";
+
+/// The key for the DLQ
+const DLQ: &str = "{queue}_svix_dlq";
 
 // v2 KEY CONSTANTS
 const LEGACY_V2_MAIN: &str = "{queue}_svix_main";
@@ -82,11 +85,12 @@ pub async fn new_pair(
 ) -> (TaskQueueProducer, TaskQueueConsumer) {
     new_pair_inner(
         cfg,
-        Duration::from_secs(45),
+        Duration::from_secs(cfg.redis_pending_duration_secs),
         prefix.unwrap_or_default(),
         MAIN,
         DELAYED,
         DELAYED_LOCK,
+        DLQ,
     )
     .await
 }
@@ -125,10 +129,12 @@ async fn new_pair_inner(
     main_queue_name: &'static str,
     delayed_queue_name: &'static str,
     delayed_lock_name: &'static str,
+    dlq_name: &'static str,
 ) -> (TaskQueueProducer, TaskQueueConsumer) {
     let main_queue_name = format!("{queue_prefix}{main_queue_name}");
     let delayed_queue_name = format!("{queue_prefix}{delayed_queue_name}");
     let delayed_lock_name = format!("{queue_prefix}{delayed_lock_name}");
+    let dlq_name = format!("{queue_prefix}{dlq_name}");
 
     // This fn is only called from
     // - `queue::new_pair` if the queue type is redis and a DSN is set
@@ -205,6 +211,7 @@ async fn new_pair_inner(
         let pool = pool.clone();
         let main_queue_name = main_queue_name.clone();
         let delayed_queue_name = delayed_queue_name.clone();
+        let deadletter_queue_name = dlq_name.clone();
 
         async move {
             let mut interval = tokio::time::interval(Duration::from_secs(1));
@@ -214,12 +221,19 @@ async fn new_pair_inner(
                 group: WORKERS_GROUP,
             };
             let delayed_queue = RedisQueueType::SortedSet(&delayed_queue_name);
+            let deadletter_queue = RedisQueueType::List(&deadletter_queue_name);
             let metrics =
                 crate::metrics::RedisQueueMetrics::new(&opentelemetry::global::meter("svix.com"));
             loop {
                 interval.tick().await;
                 metrics
-                    .record(&pool, &main_queue, &pending, &delayed_queue)
+                    .record(
+                        &pool,
+                        &main_queue,
+                        &pending,
+                        &delayed_queue,
+                        &deadletter_queue,
+                    )
                     .await;
             }
         }
@@ -236,7 +250,10 @@ async fn new_pair_inner(
         consumer_name: WORKER_CONSUMER.to_owned(),
         payload_key: QUEUE_KV_KEY.to_owned(),
         ack_deadline_ms: pending_duration,
-        dlq_config: None,
+        dlq_config: Some(DeadLetterQueueConfig {
+            queue_key: dlq_name.to_string(),
+            max_receives: 3,
+        }),
         sentinel_config: cfg.redis_sentinel_cfg.clone().map(|c| c.into()),
     };
 
@@ -389,7 +406,6 @@ async fn migrate_sset(
 pub mod tests {
     use std::time::Duration;
 
-    use assert_matches::assert_matches;
     use chrono::Utc;
     use redis::{streams::StreamReadReply, AsyncCommands as _, Direction};
     use tokio::time::timeout;
@@ -398,9 +414,11 @@ pub mod tests {
     use crate::{
         cfg::Configuration,
         core::types::{ApplicationId, EndpointId, MessageAttemptTriggerType, MessageId},
-        queue::{MessageTask, QueueTask, TaskQueueConsumer, TaskQueueProducer},
+        queue::{MessageTask, QueueTask},
         redis::RedisManager,
     };
+
+    const TEST_RECV_DEADLINE: Duration = Duration::from_secs(5);
 
     async fn get_pool(cfg: &Configuration) -> RedisManager {
         RedisManager::from_queue_backend(&cfg.queue_backend(), cfg.redis_pool_max_size).await
@@ -473,13 +491,12 @@ pub mod tests {
         assert_eq!(should_be_none, vec![]);
     }
 
-    /// Reads and acknowledges all items in the queue with the given name for clearing out entries
-    /// from previous test runs
-    async fn flush_stale_queue_items(_p: TaskQueueProducer, c: &mut TaskQueueConsumer) {
-        while let Ok(recv) = timeout(Duration::from_millis(100), c.receive_all()).await {
-            let recv = recv.unwrap().pop().unwrap();
-            recv.ack().await.unwrap();
-        }
+    async fn cleanup(pool: &RedisManager, q1: &str, q2: &str, q3: &str) {
+        let mut conn = pool
+            .get()
+            .await
+            .expect("Error retrieving connection from Redis pool");
+        let _: () = conn.del(&[q1, q2, q3]).await.unwrap();
     }
 
     #[tokio::test]
@@ -488,18 +505,16 @@ pub mod tests {
         let cfg = crate::cfg::load().unwrap();
         let pool = get_pool(&cfg).await;
 
-        let (p, mut c) = new_pair_inner(
-            &cfg,
-            Duration::from_millis(100),
-            "",
-            "{test}_idle_period",
-            "{test}_idle_period_delayed",
-            "{test}_idle_period_delayed_lock",
-        )
-        .await;
+        let main_queue = "{test}_idle_period";
+        let delayed = "{test}_idle_period_delayed";
+        let lock = "{test}_idle_period_delayed_lock";
+        let dlq = "{test}_dlq";
 
-        tokio::time::sleep(Duration::from_millis(150)).await;
-        flush_stale_queue_items(p.clone(), &mut c).await;
+        let delay = Duration::from_millis(100);
+
+        cleanup(&pool, main_queue, delayed, lock).await;
+
+        let (p, mut c) = new_pair_inner(&cfg, delay, "", main_queue, delayed, lock, dlq).await;
 
         let mt = QueueTask::MessageV1(MessageTask {
             msg_id: MessageId("test".to_owned()),
@@ -508,16 +523,16 @@ pub mod tests {
             trigger_type: MessageAttemptTriggerType::Manual,
             attempt_count: 0,
         });
-        p.send(mt.clone(), None).await.unwrap();
+        p.send(&mt, None).await.unwrap();
 
-        let recv = timeout(Duration::from_secs(5), c.receive_all())
+        let recv = timeout(Duration::from_secs(5), c.receive_all(TEST_RECV_DEADLINE))
             .await
             .expect("`c.receive()` has timed out");
         assert_eq!(*recv.unwrap()[0].task, mt);
 
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(delay).await;
 
-        let recv = timeout(Duration::from_secs(5), c.receive_all())
+        let recv = timeout(Duration::from_secs(1), c.receive_all(TEST_RECV_DEADLINE))
             .await
             .expect("`c.receive()` has timed out");
         let recv = recv.unwrap().pop().unwrap();
@@ -530,12 +545,12 @@ pub mod tests {
             .get()
             .await
             .expect("Error retrieving connection from Redis pool");
-        let keys = conn
-            .xread::<_, _, StreamReadReply>(&["{test}_ack"], &[0])
+        assert!(conn
+            .xread::<_, _, StreamReadReply>(&[main_queue], &[0])
             .await
             .unwrap()
-            .keys;
-        assert_matches!(keys.as_slice(), []);
+            .keys
+            .is_empty());
     }
 
     #[tokio::test]
@@ -544,29 +559,16 @@ pub mod tests {
         let cfg = crate::cfg::load().unwrap();
         let pool = get_pool(&cfg).await;
 
-        // Delete the keys used in this test to ensure nothing pollutes the output
-        let mut conn = pool
-            .get()
-            .await
-            .expect("Error retrieving connection from Redis pool");
-        let _: () = conn
-            .del(&[
-                "{test}_ack",
-                "{test}_ack_delayed",
-                "{test}_ack_delayed_lock",
-            ])
-            .await
-            .unwrap();
+        let main_queue = "{test}_ack";
+        let delayed = "{test}_ack_delayed";
+        let lock = "{test}_ack_delayed_lock";
+        let dlq = "{test}_dlq";
 
-        let (p, mut c) = new_pair_inner(
-            &cfg,
-            Duration::from_millis(5000),
-            "",
-            "{test}_ack",
-            "{test}_ack_delayed",
-            "{test}_ack_delayed_lock",
-        )
-        .await;
+        cleanup(&pool, main_queue, delayed, lock).await;
+
+        let delay = Duration::from_millis(100);
+
+        let (p, mut c) = new_pair_inner(&cfg, delay, "", main_queue, delayed, lock, dlq).await;
 
         let mt = QueueTask::MessageV1(MessageTask {
             msg_id: MessageId("test2".to_owned()),
@@ -575,43 +577,50 @@ pub mod tests {
             trigger_type: MessageAttemptTriggerType::Manual,
             attempt_count: 0,
         });
-        p.send(mt.clone(), None).await.unwrap();
+        p.send(&mt, None).await.unwrap();
 
-        let recv = c.receive_all().await.unwrap().pop().unwrap();
+        let recv = c
+            .receive_all(TEST_RECV_DEADLINE)
+            .await
+            .unwrap()
+            .pop()
+            .unwrap();
         assert_eq!(*recv.task, mt);
         recv.ack().await.unwrap();
 
-        if let Ok(recv) = timeout(Duration::from_secs(1), c.receive_all()).await {
+        if let Ok(recv) = timeout(delay, c.receive_all(TEST_RECV_DEADLINE)).await {
             panic!("Received unexpected QueueTask {:?}", recv.unwrap()[0].task);
         }
 
+        let mut conn = pool
+            .get()
+            .await
+            .expect("Error retrieving connection from Redis pool");
         // And assert that the task has been deleted
-        let keys = conn
-            .xread::<_, _, StreamReadReply>(&["{test}_ack"], &[0])
+        assert!(conn
+            .xread::<_, _, StreamReadReply>(&[main_queue], &[0])
             .await
             .unwrap()
-            .keys;
-        assert_matches!(keys.as_slice(), []);
+            .keys
+            .is_empty());
     }
 
     #[tokio::test]
     #[ignore]
     async fn test_nack() {
         let cfg = crate::cfg::load().unwrap();
+        let pool = get_pool(&cfg).await;
 
-        let (p, mut c) = new_pair_inner(
-            &cfg,
-            Duration::from_millis(500),
-            "",
-            "{test}_nack",
-            "{test}_nack_delayed",
-            "{test}_nack_delayed_lock",
-        )
-        .await;
+        let main_queue = "{test}_nack";
+        let delayed = "{test}_nack_delayed";
+        let lock = "{test}_nack_delayed_lock";
+        let dlq = "{test}_nack_delayed_dlq";
 
-        tokio::time::sleep(Duration::from_millis(550)).await;
+        cleanup(&pool, main_queue, delayed, lock).await;
 
-        flush_stale_queue_items(p.clone(), &mut c).await;
+        let delay = Duration::from_millis(100);
+
+        let (p, mut c) = new_pair_inner(&cfg, delay, "", main_queue, delayed, lock, dlq).await;
 
         let mt = QueueTask::MessageV1(MessageTask {
             msg_id: MessageId("test".to_owned()),
@@ -620,15 +629,23 @@ pub mod tests {
             trigger_type: MessageAttemptTriggerType::Manual,
             attempt_count: 0,
         });
-        p.send(mt.clone(), None).await.unwrap();
+        p.send(&mt, None).await.unwrap();
 
-        let recv = c.receive_all().await.unwrap().pop().unwrap();
+        let recv = c
+            .receive_all(TEST_RECV_DEADLINE)
+            .await
+            .unwrap()
+            .pop()
+            .unwrap();
         assert_eq!(*recv.task, mt);
         recv.nack().await.unwrap();
 
-        let recv = timeout(Duration::from_secs(1), c.receive_all())
-            .await
-            .expect("Expected QueueTask");
+        let recv = timeout(
+            Duration::from_millis(500) + delay,
+            c.receive_all(TEST_RECV_DEADLINE),
+        )
+        .await
+        .expect("Expected QueueTask");
         assert_eq!(*recv.unwrap().pop().unwrap().task, mt);
     }
 
@@ -636,20 +653,17 @@ pub mod tests {
     #[ignore]
     async fn test_delay() {
         let cfg = crate::cfg::load().unwrap();
+        let pool = get_pool(&cfg).await;
 
-        let (p, mut c) = new_pair_inner(
-            &cfg,
-            Duration::from_millis(500),
-            "",
-            "{test}_delay",
-            "{test}_delay_delayed",
-            "{test}_delay_delayed_lock",
-        )
-        .await;
+        let main_queue = "{test}_delay";
+        let delayed = "{test}_delay_delayed";
+        let lock = "{test}_delay_delayed_lock";
+        let dlq = "{test}_delay_delayed_dlq";
 
-        tokio::time::sleep(Duration::from_millis(550)).await;
+        cleanup(&pool, main_queue, delayed, lock).await;
 
-        flush_stale_queue_items(p.clone(), &mut c).await;
+        let delay = Duration::from_millis(500);
+        let (p, mut c) = new_pair_inner(&cfg, delay, "", main_queue, delayed, lock, dlq).await;
 
         let mt1 = QueueTask::MessageV1(MessageTask {
             msg_id: MessageId("test1".to_owned()),
@@ -666,16 +680,26 @@ pub mod tests {
             attempt_count: 0,
         });
 
-        p.send(mt1.clone(), Some(Duration::from_millis(2000)))
+        p.send(&mt1, Some(Duration::from_millis(2000)))
             .await
             .unwrap();
-        p.send(mt2.clone(), None).await.unwrap();
+        p.send(&mt2, None).await.unwrap();
 
-        let [recv2] = c.receive_all().await.unwrap().try_into().unwrap();
+        let recv2 = c
+            .receive_all(TEST_RECV_DEADLINE)
+            .await
+            .unwrap()
+            .pop()
+            .unwrap();
         assert_eq!(*recv2.task, mt2);
         recv2.ack().await.unwrap();
 
-        let [recv1] = c.receive_all().await.unwrap().try_into().unwrap();
+        let recv1 = c
+            .receive_all(TEST_RECV_DEADLINE)
+            .await
+            .unwrap()
+            .pop()
+            .unwrap();
         assert_eq!(*recv1.task, mt1);
         recv1.ack().await.unwrap();
     }
@@ -807,15 +831,16 @@ pub mod tests {
             v3_main,
             v2_delayed,
             v2_delayed_lock,
+            "dlq-bruh",
         )
         .await;
 
         // 2 second delay on the delayed and pending queue is inserted after main queue, so first
         // the 6-10 should appear, then 1-5, then 11-15
 
-        let mut items = c.receive_all().await.unwrap();
+        let mut items = c.receive_all(TEST_RECV_DEADLINE).await.unwrap();
         while items.len() < 15 {
-            let more_tasks = c.receive_all().await.unwrap();
+            let more_tasks = c.receive_all(TEST_RECV_DEADLINE).await.unwrap();
             assert!(!more_tasks.is_empty(), "failed to receive all the tasks");
             items.extend(more_tasks);
         }

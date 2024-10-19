@@ -1,4 +1,4 @@
-name: Javascript Release
+name: JavaScript Release
 
 on:
   push:
@@ -13,15 +13,15 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     environment: release
 
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v2
+      - uses: actions/setup-node@v4
         with:
-          node-version: '14.x'
+          node-version: 'latest'
           registry-url: 'https://registry.npmjs.org'
 
       - name: Regen openapi libs

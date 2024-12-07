@@ -84,7 +84,7 @@ import * as base64 from "@stablelib/base64";
 import * as sha256 from "fast-sha256";
 
 const WEBHOOK_TOLERANCE_IN_SECONDS = 5 * 60; // 5 minutes
-const VERSION = "1.42.0";
+const VERSION = "1.43.0";
 
 class UserAgentMiddleware implements Middleware {
   public pre(context: RequestContext): Promise<RequestContext> {
@@ -700,14 +700,16 @@ class Message {
 }
 
 /**
- * Creates a `MessageIn` with the payload already being serialized.
+ * Creates a `MessageIn` with a pre-serialized payload.
  *
- * The payload is not normalized on the server (usually whitespace outside
- * of string literals, unnecessarily escaped characters in string and such
- * are fixed up by the server), and is not even required to be JSON.
+ * The payload is not normalized on the server. Normally, payloads are
+ * required to be JSON, and Svix will minify the payload before sending the
+ * webhooks (for example, by removing extraneous whitespace or unnecessarily
+ * escaped characters in strings). With this function, the payload will be
+ * sent "as is", without any minification or other processing.
  *
  * @param payload Serialized message payload
- * @param contentType Content type of the payload to send as a header. Defaults to `application/json`.
+ * @param contentType The value to use for the Content-Type header of the webhook sent by Svix, overwriting the default of `application/json` if specified
  *
  * See the class documentation for details about the other parameters.
  */

@@ -18,14 +18,22 @@ type (
 )
 
 type MessageListOptions struct {
-	Iterator    *string
-	Limit       *int32
-	EventTypes  *[]string
-	Before      *time.Time
-	After       *time.Time
-	Channel     *string
-	Tag         *string
+	// Limit the number of returned items
+	Limit *int32
+	// The iterator returned from a prior invocation
+	Iterator *string
+	// Filter response based on the channel
+	Channel *string
+	// Only include items created before a certain date
+	Before *time.Time
+	// Only include items created after a certain date
+	After *time.Time
+	// When `true` message payloads are included in the response
 	WithContent *bool
+	// Filter messages matching the provided tag
+	Tag *string
+	// Filter response based on the event type
+	EventTypes *[]string
 }
 
 func (m *Message) List(ctx context.Context, appId string, options *MessageListOptions) (*ListResponseMessageOut, error) {
@@ -97,7 +105,7 @@ func (m *Message) ExpungeContent(ctx context.Context, appId string, msgId string
 	return wrapError(err, res)
 }
 
-// Instantiates a new MessageIn object with a pre-serialized payload.
+// Instantiates a new MessageIn object with a raw string payload.
 //
 // The payload is not normalized on the server. Normally, payloads are required
 // to be JSON, and Svix will minify the payload before sending the webhook

@@ -16,8 +16,25 @@ import com.svix.kotlin.models.EndpointTransformationOut
 import com.svix.kotlin.models.EndpointUpdate
 import com.svix.kotlin.models.EventExampleIn
 import com.svix.kotlin.models.ListResponseEndpointOut
+import com.svix.kotlin.models.Ordering
 import com.svix.kotlin.models.RecoverIn
 import com.svix.kotlin.models.ReplayIn
+import java.time.OffsetDateTime
+
+class EndpointListOptions : ListOptions() {
+    var order: Ordering? = null
+
+    fun order(order: Ordering) = apply { this.order = order }
+
+    override fun iterator(iterator: String) = apply { super.iterator(iterator) }
+
+    override fun limit(limit: Int) = apply { super.limit(limit) }
+}
+
+class EndpointStatsOptions {
+    var since: OffsetDateTime? = null
+    var until: OffsetDateTime? = null
+}
 
 class Endpoint internal constructor(token: String, options: SvixOptions) {
     val api = EndpointApi(options.serverUrl)
@@ -182,7 +199,7 @@ class Endpoint internal constructor(token: String, options: SvixOptions) {
         options: PostOptions = PostOptions(),
     ) {
         try {
-            api.v1EndpointReplay(appId, endpointId, replayIn, options.idempotencyKey)
+            api.v1EndpointReplayMissing(appId, endpointId, replayIn, options.idempotencyKey)
         } catch (e: Exception) {
             throw ApiException.wrap(e)
         }

@@ -1,9 +1,12 @@
 name: Java Release
 
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_dispatch:
+  workflow_run:
+    workflows:
+      - Mega Releaser
+    types:
+      - completed
 
 jobs:
   dotnet:

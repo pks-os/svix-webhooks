@@ -1,9 +1,12 @@
 name: Python Release
 
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_dispatch:
+  workflow_run:
+    workflows:
+      - Mega Releaser
+    types:
+      - completed
 
 jobs:
   build:

@@ -1,5 +1,16 @@
 # Changelog
 
+## Version 1.56.0
+* Skipping versions: we had an issue with our CI that created duplicated Go
+  library releases and forced us to bump the version across the libs and the
+  server. Apologies for any inconvenience caused.
+* Libs/Go: retracts several versions which were tagged prematurely. Apologies!
+
+## Version 1.45.1
+* CLI: Rename the binary back from `svix-cli` to `svix`
+* Libs/Java: Stop sharing one `ApiClient` between all `Svix` instances. Fixes a bug where multiple
+  independently instantiated `Svix` instances would always use the same base path and auth token.
+
 ## Version 1.45.0
 * CLI **(New)**: New Rust-based CLI with support for all recent Svix functionality.
 * Libs/Rust **(Breaking)**: Add `api::MessageAttemptListAttemptedMessagesOptions` and use it for

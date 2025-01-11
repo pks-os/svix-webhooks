@@ -1,3 +1,4 @@
+// this file is @generated
 package svix
 
 import (
@@ -19,96 +20,137 @@ type ApplicationListOptions struct {
 	Order *Ordering
 }
 
-func (a *Application) List(ctx context.Context, options *ApplicationListOptions) (*ListResponseApplicationOut, error) {
-	req := a.api.ApplicationAPI.V1ApplicationList(ctx)
+// List of all the organization's applications.
+func (application *Application) List(
+	ctx context.Context,
+	options *ApplicationListOptions,
+) (*ListResponseApplicationOut, error) {
+	req := application.api.ApplicationAPI.V1ApplicationList(
+		ctx,
+	)
+
 	if options != nil {
-		if options.Iterator != nil {
-			req = req.Iterator(*options.Iterator)
-		}
 		if options.Limit != nil {
 			req = req.Limit(*options.Limit)
+		}
+		if options.Iterator != nil {
+			req = req.Iterator(*options.Iterator)
 		}
 		if options.Order != nil {
 			req = req.Order(*options.Order)
 		}
 	}
+
 	ret, res, err := req.Execute()
 	if err != nil {
 		return nil, wrapError(err, res)
 	}
+
 	return ret, nil
 }
 
-func (a *Application) Create(ctx context.Context, applicationIn *ApplicationIn) (*ApplicationOut, error) {
-	return a.CreateWithOptions(ctx, applicationIn, nil)
+// Create a new application.
+func (application *Application) Create(
+	ctx context.Context,
+	applicationIn *ApplicationIn,
+) (*ApplicationOut, error) {
+	return application.CreateWithOptions(
+		ctx,
+		applicationIn,
+		nil,
+	)
 }
 
-func (a *Application) CreateWithOptions(ctx context.Context, applicationIn *ApplicationIn, options *PostOptions) (*ApplicationOut, error) {
-	req := a.api.ApplicationAPI.V1ApplicationCreate(ctx)
-	req = req.ApplicationIn(*applicationIn)
+// Create a new application.
+func (application *Application) CreateWithOptions(
+	ctx context.Context,
+	applicationIn *ApplicationIn,
+	options *PostOptions,
+) (*ApplicationOut, error) {
+	req := application.api.ApplicationAPI.V1ApplicationCreate(
+		ctx,
+	).ApplicationIn(*applicationIn)
+
 	if options != nil {
 		if options.IdempotencyKey != nil {
 			req = req.IdempotencyKey(*options.IdempotencyKey)
 		}
 	}
+
 	ret, res, err := req.Execute()
 	if err != nil {
 		return nil, wrapError(err, res)
 	}
+
 	return ret, nil
 }
 
-func (a *Application) GetOrCreate(ctx context.Context, applicationIn *ApplicationIn) (*ApplicationOut, error) {
-	return a.GetOrCreateWithOptions(ctx, applicationIn, nil)
-}
+// Get an application.
+func (application *Application) Get(
+	ctx context.Context,
+	appId string,
+) (*ApplicationOut, error) {
+	req := application.api.ApplicationAPI.V1ApplicationGet(
+		ctx,
+		appId,
+	)
 
-func (a *Application) GetOrCreateWithOptions(ctx context.Context, applicationIn *ApplicationIn, options *PostOptions) (*ApplicationOut, error) {
-	req := a.api.ApplicationAPI.V1ApplicationCreate(ctx)
-	req = req.ApplicationIn(*applicationIn)
-	req = req.GetIfExists(true)
-	if options != nil {
-		if options.IdempotencyKey != nil {
-			req = req.IdempotencyKey(*options.IdempotencyKey)
-		}
-	}
 	ret, res, err := req.Execute()
 	if err != nil {
 		return nil, wrapError(err, res)
 	}
+
 	return ret, nil
 }
 
-func (a *Application) Get(ctx context.Context, appId string) (*ApplicationOut, error) {
-	req := a.api.ApplicationAPI.V1ApplicationGet(ctx, appId)
+// Update an application.
+func (application *Application) Update(
+	ctx context.Context,
+	appId string,
+	applicationIn *ApplicationIn,
+) (*ApplicationOut, error) {
+	req := application.api.ApplicationAPI.V1ApplicationUpdate(
+		ctx,
+		appId,
+	).ApplicationIn(*applicationIn)
+
 	ret, res, err := req.Execute()
 	if err != nil {
 		return nil, wrapError(err, res)
 	}
+
 	return ret, nil
 }
 
-func (a *Application) Update(ctx context.Context, appId string, applicationIn *ApplicationIn) (*ApplicationOut, error) {
-	req := a.api.ApplicationAPI.V1ApplicationUpdate(ctx, appId)
-	req = req.ApplicationIn(*applicationIn)
-	ret, res, err := req.Execute()
-	if err != nil {
-		return nil, wrapError(err, res)
-	}
-	return ret, nil
-}
+// Delete an application.
+func (application *Application) Delete(
+	ctx context.Context,
+	appId string,
+) error {
+	req := application.api.ApplicationAPI.V1ApplicationDelete(
+		ctx,
+		appId,
+	)
 
-func (a *Application) Patch(ctx context.Context, appId string, applicationPatch *ApplicationPatch) (*ApplicationOut, error) {
-	req := a.api.ApplicationAPI.V1ApplicationPatch(ctx, appId)
-	req = req.ApplicationPatch(*applicationPatch)
-	ret, res, err := req.Execute()
-	if err != nil {
-		return nil, wrapError(err, res)
-	}
-	return ret, nil
-}
-
-func (a *Application) Delete(ctx context.Context, appId string) error {
-	req := a.api.ApplicationAPI.V1ApplicationDelete(ctx, appId)
 	res, err := req.Execute()
 	return wrapError(err, res)
+}
+
+// Partially update an application.
+func (application *Application) Patch(
+	ctx context.Context,
+	appId string,
+	applicationPatch *ApplicationPatch,
+) (*ApplicationOut, error) {
+	req := application.api.ApplicationAPI.V1ApplicationPatch(
+		ctx,
+		appId,
+	).ApplicationPatch(*applicationPatch)
+
+	ret, res, err := req.Execute()
+	if err != nil {
+		return nil, wrapError(err, res)
+	}
+
+	return ret, nil
 }

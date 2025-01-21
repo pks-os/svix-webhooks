@@ -5,13 +5,13 @@ on:
       - main
     paths:
       - "python/**"
-      - "openapi.json"
+      - "lib-openapi.json"
       - "server/**"
       - ".github/workflows/python-tests.yml"
   pull_request:
     paths:
       - "python/**"
-      - "openapi.json"
+      - "lib-openapi.json"
       - "server/**"
       - ".github/workflows/python-tests.yml"
 jobs:
@@ -20,8 +20,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build svix server image
-        run: docker compose build
+      - name: Pull svix server image (and dependencies)
+        run: docker compose pull
         working-directory: ./server
 
       - uses: actions/setup-python@v5
